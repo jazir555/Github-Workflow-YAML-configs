@@ -8,3 +8,5 @@ composer-lock.yml
 install-dependencies.yml
 
 release.yml
+
+phpcbf.yml
