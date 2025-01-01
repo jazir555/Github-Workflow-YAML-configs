@@ -1,0 +1,41 @@
+name: Generate composer.lock
+
+on:
+  push:
+    paths:
+      - 'composer.json'
+  workflow_dispatch:
+
+jobs:
+  update-composer-lock:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: ${{ github.head_ref }}
+        
+    - name: Setup PHP
+      uses: shivammathur/setup-php@v2
+      with:
+        php-version: '8.1'
+        
+    - name: Install Composer
+      run: |
+        php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');"
+        php composer-setup.php
+        php -r "unlink('composer-setup.php');"
+        
+    - name: Remove existing composer.lock
+      run: rm -f composer.lock
+        
+    - name: Generate composer.lock
+      run: php composer.phar install
+        
+    - name: Commit composer.lock
+      run: |
+        git config --global user.name 'GitHub Actions Bot'
+        git config --global user.email 'actions@github.com'
+        git add composer.lock
+        git commit -m "Generate composer.lock file" || echo "No changes to commit"
+        git push

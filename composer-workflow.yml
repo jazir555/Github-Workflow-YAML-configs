@@ -1,0 +1,137 @@
+name: Composer Workflow
+
+on:
+  workflow_dispatch: # Manual trigger
+  push:
+    paths:
+      - '**/*.yml'          # Triggers on any YAML file changes
+      - 'composer.json'    # Triggers on changes to composer.json
+      - 'composer.lock'    # Triggers on changes to composer.lock
+  pull_request:
+    paths:
+      - '**/*.yml'          # Triggers on any YAML file changes
+      - 'composer.json'    # Triggers on changes to composer.json
+      - 'composer.lock'    # Triggers on changes to composer.lock
+
+jobs:
+  generate-composer-lock:
+    name: Generate composer.lock
+    if: github.event_name == 'push' && (
+          contains(github.event.head_commit.message, 'composer.json') || 
+          contains(github.event.head_commit.message, 'composer.lock') || 
+          startsWith(github.event.head_commit.message, 'Update dependencies')
+        )
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Ensures full history is fetched
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.1'  # Ensure PHP 8.1 is used
+          extensions: mbstring, intl, xml
+          coverage: none
+
+      - name: Install Composer
+        run: |
+          php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');"
+          php composer-setup.php --install-dir=/usr/local/bin --filename=composer
+          php -r "unlink('composer-setup.php');"
+
+      - name: Remove existing composer.lock
+        run: rm -f composer.lock
+
+      - name: Generate composer.lock
+        run: composer install --prefer-dist --no-progress
+
+      - name: Commit composer.lock
+        run: |
+          git config --global user.name 'GitHub Actions Bot'
+          git config --global user.email 'actions@github.com'
+          git add composer.lock
+          git commit -m "🔄 Generate composer.lock file" || echo "No changes to commit"
+          git push
+
+  composer-compatibility-check:
+    name: Composer Compatibility Check
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        php-version: ['8.1', '8.2']  # Only PHP 8.1 and 8.2
+      fail-fast: false  # Continue running other jobs even if one fails
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup PHP ${{ matrix.php-version }}
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php-version }}
+          extensions: mbstring, intl, xml
+          coverage: none
+
+      - name: Cache Composer Dependencies
+        uses: actions/cache@v3
+        with:
+          path: vendor
+          key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.lock') }}-${{ matrix.php-version }}
+          restore-keys: |
+            ${{ runner.os }}-composer-${{ hashFiles('**/composer.lock') }}-
+            ${{ runner.os }}-composer-
+      
+      - name: Install Composer
+        run: |
+          php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');"
+          php composer-setup.php --install-dir=/usr/local/bin --filename=composer
+          php -r "unlink('composer-setup.php');"
+
+      - name: Install Dependencies
+        run: composer install --prefer-dist --no-progress
+
+      - name: Validate composer.json
+        run: composer validate --strict
+
+      - name: Run Composer Compatibility Check
+        run: |
+          # Attempt to install dependencies
+          if ! composer install --no-interaction --prefer-dist; then
+            echo "Dependency installation failed for PHP ${{ matrix.php-version }}."
+            exit 1
+          fi
+
+      - name: Run Tests
+        run: vendor/bin/phpunit tests/  # Specify the tests directory
+
+      - name: Create Pull Request for Compatibility Fix
+        if: failure() && github.event_name != 'pull_request'
+        uses: peter-evans/create-pull-request@v5
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "🔄 Update composer dependencies for PHP ${{ matrix.php-version }}"
+          title: "Composer Dependencies Update for PHP ${{ matrix.php-version }}"
+          body: |
+            This PR updates composer dependencies to be compatible with PHP ${{ matrix.php-version }}.
+            
+            Changes were automatically generated due to compatibility issues detected in the workflow.
+            
+            Please review the changes and merge if appropriate.
+          branch: fix/composer-compatibility-php-${{ matrix.php-version }}
+          delete-branch: true
+          base: main
+
+      - name: Comment on Failed Installation in PR
+        if: failure() && github.event_name == 'pull_request'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.name,
+              body: '❌ Dependency installation failed for PHP ${{ matrix.php-version }}. Please check the workflow logs for details.'
+            })

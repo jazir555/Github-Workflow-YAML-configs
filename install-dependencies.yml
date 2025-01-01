@@ -1,0 +1,65 @@
+# .github/workflows/install-dependencies.yml
+
+name: Install Dependencies
+
+on:
+  push:
+    paths:
+      - 'composer.json'
+      - 'composer.lock'
+  workflow_dispatch: # Allows manual triggering of the workflow
+
+jobs:
+  install-dependencies:
+    name: Install Composer Dependencies and Update Vendor Folder
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Prevent Workflow from Running on Commits Made by GitHub Actions
+      - name: Check if Commit is from GitHub Actions
+        if: github.actor == 'github-actions[bot]'
+        run: echo "Commit made by GitHub Actions. Exiting workflow." && exit 0
+
+      # 2. Checkout the repository
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: 0  # Ensures full history is fetched
+
+      # 3. Setup PHP
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.1' # Specify the PHP version you need
+          extensions: mbstring, intl, xml
+          coverage: none
+
+      # 4. Install Composer
+      - name: Install Composer
+        run: |
+          php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');"
+          php composer-setup.php --install-dir=/usr/local/bin --filename=composer
+          php -r "unlink('composer-setup.php');"
+
+      # 5. Install Dependencies
+      - name: Install Composer Dependencies
+        run: composer install --prefer-dist --no-progress --no-interaction
+
+      # 6. Commit and Push Changes
+      - name: Commit and Push Changes
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Configure Git
+          git config --global user.name 'GitHub Actions Bot'
+          git config --global user.email 'actions@github.com'
+          
+          # Add the vendor folder
+          git add vendor/
+          
+          # Commit changes if there are any
+          git commit -m "🔄 Update vendor dependencies" || echo "No changes to commit"
+
+          # Push changes only if there are new commits
+          git push origin ${{ github.ref }}

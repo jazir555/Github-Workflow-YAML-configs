@@ -1,0 +1,93 @@
+name: PHP CI/CD Workflow
+
+on:
+  workflow_dispatch: # Manual trigger
+  push:
+    branches:
+      - main
+    paths:
+      - '**/*.php'
+      - '**/*.yml'
+      - 'composer.json'
+      - 'composer.lock'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - '**/*.php'
+      - '**/*.yml'
+      - 'composer.json'
+      - 'composer.lock'
+
+jobs:
+  php-codesniffer:
+    name: Run PHP CodeSniffer
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        php: [ '8.1' ] # Updated PHP version to 8.1
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Ensures full history is fetched
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: mbstring, intl, xml
+          tools: composer, cs2pr
+          coverage: none
+
+      - name: Install Composer Dependencies
+        run: composer install --prefer-dist --no-progress
+
+      - name: Get Changed PHP Files
+        id: changed-files
+        run: |
+          echo "::set-output name=files::$(git diff --name-only ${{ github.event.before }} ${{ github.sha }} | grep '\.php$' || true)"
+      
+      - name: Run PHPCBF on Changed Files
+        if: steps.changed-files.outputs.files != ''
+        continue-on-error: true
+        run: |
+          echo "${{ steps.changed-files.outputs.files }}" | xargs vendor/bin/phpcbf
+
+      - name: Commit PHPCBF Changes
+        if: steps.changed-files.outputs.files != '' && success()
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "🤖 PHPCBF fixes"
+          file_pattern: |
+            **/*.php
+            composer.lock
+
+  phpunit:
+    name: Run PHPUnit Tests
+    runs-on: ubuntu-latest
+    needs: php-codesniffer
+
+    strategy:
+      matrix:
+        php: [ '8.1' ]
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: mbstring, intl, xml
+          tools: composer
+          coverage: none
+
+      - name: Install Composer Dependencies
+        run: composer install --prefer-dist --no-progress
+
+      - name: Run PHPUnit Tests
+        run: vendor/bin/phpunit
