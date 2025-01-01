@@ -12,6 +12,7 @@ Updates Composer.lock to match composer.json automatically
 install-dependencies.yml
 
 Updates the repo's vendor folder and installs dependencies specified in composer.json.
+
 ---------
 
 release.yml
